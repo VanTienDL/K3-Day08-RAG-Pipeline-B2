@@ -214,7 +214,7 @@ def _extractive_answer(chunks: list[dict]) -> str:
     return "\n".join(lines) if len(lines) > 1 else NO_EVIDENCE_ANSWER
 
 
-def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
+def generate_with_citation(query: str, top_k: int = TOP_K, use_reranking: bool = True) -> dict:
     """
     End-to-end RAG generation có citation.
 
@@ -244,7 +244,7 @@ def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
         raise ValueError("top_k phải là số nguyên lớn hơn 0.")
 
     try:
-        chunks = retrieve(query, top_k=top_k)
+        chunks = retrieve(query, top_k=top_k, use_reranking=use_reranking)
     except Exception as exc:
         print(f"  ⚠ Retrieval lỗi: {type(exc).__name__}: {exc}")
         chunks = []
