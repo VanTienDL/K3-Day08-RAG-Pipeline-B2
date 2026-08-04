@@ -136,8 +136,11 @@ def load_documents() -> list[dict]:
         if not content:
             continue
 
-        # Thư mục cha cho biết đây là văn bản chính sách hay bài viết
-        doc_type = "legal" if "legal" in md_file.parts else "news"
+        # Thư mục con NGAY DƯỚI standardized/ cho biết đây là văn bản chính sách hay
+        # bài viết. Chỉ xét phần đường dẫn tương đối — nếu xét md_file.parts (đường dẫn
+        # tuyệt đối) thì một thư mục cha bất kỳ tên "legal" trên máy sẽ gán nhầm type.
+        relative = md_file.relative_to(STANDARDIZED_DIR)
+        doc_type = "legal" if relative.parts[0] == "legal" else "news"
         documents.append({
             "content": content,
             "metadata": {"source": md_file.name, "type": doc_type},
@@ -187,6 +190,16 @@ def embed_chunks(chunks: list[dict]) -> list[dict]:
         return chunks
 
     model = get_embedding_model()
+
+    # Đổi EMBEDDING_MODEL mà quên sửa EMBEDDING_DIM là lỗi hay gặp: Chroma sẽ nhận
+    # vector sai chiều và báo lỗi khó hiểu ở tận bước index. Chặn ngay tại đây.
+    actual_dim = model.get_sentence_embedding_dimension()
+    if actual_dim != EMBEDDING_DIM:
+        raise ValueError(
+            f"EMBEDDING_DIM={EMBEDDING_DIM} không khớp model {EMBEDDING_MODEL} "
+            f"(thật sự là {actual_dim}). Sửa EMBEDDING_DIM và xoá chroma_db/ để index lại."
+        )
+
     texts = [c["content"] for c in chunks]
 
     # normalize_embeddings=True: vector về độ dài 1 -> cosine distance của Chroma
@@ -211,8 +224,11 @@ def index_to_vectorstore(chunks: list[dict]):
 
     collection = get_collection()
 
+    # Có type trong ID: legal/ và news/ có thể chứa 2 file TRÙNG TÊN, khi đó ID trùng
+    # nhau và upsert sẽ ghi đè chunk của file này bằng chunk của file kia (mất dữ liệu
+    # âm thầm, không báo lỗi).
     ids = [
-        f"{c['metadata']['source']}_chunk_{c['metadata']['chunk_index']}"
+        f"{c['metadata']['type']}_{c['metadata']['source']}_chunk_{c['metadata']['chunk_index']}"
         for c in chunks
     ]
 

@@ -14,6 +14,12 @@ Chạy:
 
 import os
 
+from dotenv import load_dotenv
+
+# Bắt buộc: HyDE bên dưới đọc OPENROUTER_API_KEY qua os.getenv. Không load .env ở đây
+# thì key nằm trong .env sẽ không thấy được, HyDE âm thầm tắt và tưởng là thiếu key.
+load_dotenv()
+
 try:
     from .task4_chunking_indexing import get_collection, get_embedding_model
 except ImportError:  # khi chạy trực tiếp `python src/task5_semantic_search.py`
@@ -42,6 +48,14 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
     if total == 0:
         print("⚠ Vector store rỗng — chạy `python -m src.task4_chunking_indexing` trước")
         return []
+
+    # Công thức score = 1 - distance ở dưới CHỈ đúng khi collection dùng cosine.
+    # chroma_db/ tạo bằng bản code cũ có thể đang để mặc định L2 (distance không chặn
+    # trên bởi 1) -> score bị kẹp về 0 hàng loạt và ngưỡng fallback ở Task 9 sai theo.
+    space = (collection.metadata or {}).get("hnsw:space")
+    if space != "cosine":
+        print(f"⚠ Collection đang dùng space='{space}' thay vì 'cosine' — xoá chroma_db/ "
+              "rồi chạy lại `python -m src.task4_chunking_indexing`")
 
     # Bước 1: embed query bằng ĐÚNG model đã dùng ở Task 4, cùng cách normalize
     model = get_embedding_model()
