@@ -17,7 +17,7 @@ Chạy:
 """
 
 import os
-
+from typing import Any
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -45,7 +45,7 @@ TEMPERATURE = 0.3
 # LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-4o-mini")
 
-NO_EVIDENCE_ANSWER = "Tôi không thể xác minh thông tin này từ nguồn hiện có"
+NO_EVIDENCE_ANSWER = "Tôi không thể xác minh thông tin này từ nguồn hiện có."
 
 
 # =============================================================================
@@ -84,12 +84,14 @@ def reorder_for_llm(chunks: list[dict]) -> list[dict]:
     Returns:
         List reordered để maximize LLM attention.
     """
-    if len(chunks) <= 2:
-        return list(chunks)
+    if not chunks:
+        return []
 
-    front = chunks[::2]        # hạng 1, 3, 5 -> nửa đầu prompt
-    back = chunks[1::2]        # hạng 2, 4    -> nửa cuối prompt
-    return front + back[::-1]  # đảo nửa sau để hạng 2 nằm ở vị trí cuối cùng
+    # Tạo list mới để không làm thay đổi thứ tự kết quả retrieval ban đầu.
+    items = list(chunks)
+    front = items[::2]
+    back = items[1::2]
+    return front + back[::-1]
 
 
 # =============================================================================
@@ -107,16 +109,62 @@ def format_context(chunks: list[dict]) -> str:
     Returns:
         Formatted context string.
     """
-    context_parts = []
+    context_parts: list[str] = []
     for i, chunk in enumerate(chunks, 1):
         metadata = chunk.get("metadata") or {}
-        source = metadata.get("source", f"Source {i}")
-        doc_type = metadata.get("type", "unknown")
-        context_parts.append(
-            f"[Document {i} | Source: {source} | Type: {doc_type}]\n"
-            f"{chunk.get('content', '')}\n"
+        source = _first_value(
+            metadata, "source", "title", "filename", "file_name", default=f"Nguồn {i}"
         )
-    return "\n---\n".join(context_parts)
+        title = _first_value(metadata, "title", default=source)
+        year = _first_value(metadata, "year", "published_year", "date", default="không rõ năm")
+        doc_type = _first_value(metadata, "type", "doc_type", default="không rõ")
+        url = _first_value(metadata, "url", "source_url", default="Không có")
+        content = str(chunk.get("content") or "").strip()
+
+        if not content:
+            continue
+
+        context_parts.append(
+            f"[Tài liệu {i}]\n"
+            f"Nguồn: {source}\n"
+            f"Tiêu đề: {title}\n"
+            f"Năm: {year}\n"
+            f"Loại: {doc_type}\n"
+            f"URL: {url}\n"
+            f"Nội dung:\n{content}"
+        )
+
+    return "\n\n---\n\n".join(context_parts)
+
+
+def _first_value(metadata: dict[str, Any], *keys: str, default: str) -> str:
+    """Lấy metadata đầu tiên có giá trị và chuẩn hoá thành chuỗi."""
+    for key in keys:
+        value = metadata.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default
+
+
+def _create_llm_client():
+    """Tạo OpenAI-compatible client cho OpenRouter hoặc OpenAI."""
+    from openai import OpenAI
+
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    if openrouter_key:
+        return OpenAI(
+            api_key=openrouter_key,
+            base_url="https://openrouter.ai/api/v1",
+            timeout=60.0,
+        ), LLM_MODEL
+    if openai_key:
+        # OpenRouter IDs có dạng provider/model; OpenAI API cần tên model thuần.
+        model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        return OpenAI(api_key=openai_key, timeout=60.0), model
+
+    return None, None
 
 
 # =============================================================================
@@ -130,12 +178,19 @@ def _extractive_answer(chunks: list[dict]) -> str:
     Không sinh chữ mới — chỉ trích nguyên văn đoạn liên quan nhất kèm nguồn, để
     demo/pytest vẫn chạy được. Có nhãn cảnh báo để không nhầm là output của LLM.
     """
-    lines = ["⚠ Chưa cấu hình OPENROUTER_API_KEY — dưới đây là trích dẫn nguyên văn "
-             "từ tài liệu, chưa qua LLM tổng hợp:\n"]
-    for chunk in chunks[:3]:
-        source = (chunk.get("metadata") or {}).get("source", "Unknown")
-        lines.append(f"- {chunk.get('content', '')[:400].strip()} [{source}]")
-    return "\n".join(lines)
+    lines = ["⚠ Chưa thể dùng LLM — dưới đây là trích dẫn nguyên văn từ tài liệu:"]
+    for index, chunk in enumerate(chunks[:3], 1):
+        metadata = chunk.get("metadata") or {}
+        source = _first_value(
+            metadata, "source", "title", "filename", default=f"Nguồn {index}"
+        )
+        year = _first_value(
+            metadata, "year", "published_year", "date", default="không rõ năm"
+        )
+        content = str(chunk.get("content") or "").strip()[:400]
+        if content:
+            lines.append(f"- {content} [{source}, {year}]")
+    return "\n".join(lines) if len(lines) > 1 else NO_EVIDENCE_ANSWER
 
 
 def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
@@ -161,59 +216,62 @@ def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
             'retrieval_source': str  # 'hybrid' hoặc 'pageindex'
         }
     """
-    # Step 1: Retrieve
+    query = str(query or "").strip()
+    if not query:
+        raise ValueError("Câu hỏi không được để trống.")
+    if not isinstance(top_k, int) or top_k < 1:
+        raise ValueError("top_k phải là số nguyên lớn hơn 0.")
+
     try:
         chunks = retrieve(query, top_k=top_k)
-    except Exception as e:
-        print(f"  ⚠ Retrieval lỗi: {type(e).__name__}: {e}")
+    except Exception as exc:
+        print(f"  ⚠ Retrieval lỗi: {type(exc).__name__}: {exc}")
         chunks = []
 
     if not chunks:
         return {
-            "answer": f"{NO_EVIDENCE_ANSWER} (không tìm thấy tài liệu liên quan).",
+            "answer": NO_EVIDENCE_ANSWER,
             "sources": [],
             "retrieval_source": "none",
         }
 
-    # Step 2 + 3: Reorder rồi format context
     reordered = reorder_for_llm(chunks)
     context = format_context(reordered)
-
-    # Step 4: Build prompt
-    user_message = f"""Context:\n{context}\n\n---\n\nQuestion: {query}"""
-
-    retrieval_source = chunks[0].get("source", "hybrid")
-
-    # Step 5: Call LLM (OpenRouter — OpenAI-compatible API)
-    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    retrieval_source = chunks[0].get("source", "unknown")
+    if not context:
         return {
-            "answer": _extractive_answer(chunks),
+            "answer": NO_EVIDENCE_ANSWER,
             "sources": chunks,
             "retrieval_source": retrieval_source,
         }
 
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key, base_url="https://openrouter.ai/api/v1")
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            temperature=TEMPERATURE,
-            top_p=TOP_P,
-        )
-        answer = response.choices[0].message.content or NO_EVIDENCE_ANSWER
-    except Exception as e:
-        print(f"  ⚠ LLM lỗi: {type(e).__name__}: {e}")
+    user_message = (
+        "Dưới đây là các tài liệu duy nhất bạn được phép sử dụng. "
+        "Hãy trích dẫn theo đúng trường Nguồn và Năm của từng tài liệu.\n\n"
+        f"CONTEXT:\n{context}\n\n"
+        f"CÂU HỎI:\n{query}"
+    )
+    client, model = _create_llm_client()
+    if client is None:
         answer = _extractive_answer(chunks)
+    else:
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=TEMPERATURE,
+                top_p=TOP_P,
+            )
+            answer = (response.choices[0].message.content or "").strip()
+        except Exception as exc:
+            print(f"  ⚠ LLM lỗi: {type(exc).__name__}: {exc}")
+            answer = _extractive_answer(chunks)
 
-    # Step 6: Return
     return {
-        "answer": answer,
+        "answer": answer or NO_EVIDENCE_ANSWER,
         "sources": chunks,
         "retrieval_source": retrieval_source,
     }
