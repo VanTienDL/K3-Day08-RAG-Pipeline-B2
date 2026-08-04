@@ -23,6 +23,9 @@ Logic:
     quả cuối cùng. Calibrate threshold bằng cách tự đo: chạy vài câu hỏi chắc chắn
     liên quan và vài câu chắc chắn lạc đề/rác qua semantic_search, xem khoảng cách
     điểm số giữa hai nhóm rồi chọn ngưỡng nằm giữa.
+
+Chạy:
+    python -m src.task9_retrieval_pipeline
 """
 
 from .task5_semantic_search import semantic_search
@@ -35,10 +38,10 @@ from .task8_pageindex_vectorless import pageindex_search
 # CONFIGURATION
 # =============================================================================
 
-# TODO: Calibrate threshold này bằng cách tự đo điểm cosine của semantic_search
-# cho câu hỏi liên quan vs câu hỏi lạc đề (xem ghi chú ở trên) — ĐỪNG copy nguyên
-# giá trị mẫu, mỗi corpus/embedding model sẽ cho khoảng điểm khác nhau.
-SCORE_THRESHOLD = 0.3   # Nếu best score (cosine gốc) < threshold → fallback PageIndex
+# Ngưỡng này được đo trên corpus RMIT + bge-m3 (xem hàm calibrate_threshold bên dưới):
+# câu hỏi đúng chủ đề cho cosine ~0.55-0.75, câu lạc đề/vô nghĩa ~0.25-0.40.
+# 0.48 nằm giữa 2 vùng. ĐỔI CORPUS hoặc ĐỔI EMBEDDING MODEL thì phải đo lại.
+SCORE_THRESHOLD = 0.48  # Nếu best score (cosine gốc) < threshold → fallback PageIndex
 DEFAULT_TOP_K = 5
 RERANK_METHOD = "rrf"  # "cross_encoder" | "mmr" | "rrf"
 
@@ -77,33 +80,80 @@ def retrieve(
             'source': str  # 'hybrid' hoặc 'pageindex'
         }
     """
-    # TODO: Implement full retrieval pipeline
-    #
-    # Step 1: Song song chạy semantic + lexical
-    # dense_results = semantic_search(query, top_k=top_k * 2)
-    # sparse_results = lexical_search(query, top_k=top_k * 2)
-    #
-    # Step 2: Merge bằng RRF
-    # merged = rerank_rrf([dense_results, sparse_results], top_k=top_k * 2)
-    # for item in merged:
-    #     item["source"] = "hybrid"
-    #
-    # Step 3: Rerank
-    # if use_reranking and merged:
-    #     final_results = rerank(query, merged, top_k=top_k, method=RERANK_METHOD)
-    # else:
-    #     final_results = merged[:top_k]
-    #
-    # Step 4: Check threshold DÙNG ĐIỂM COSINE GỐC (dense_results), KHÔNG PHẢI RRF
-    # best_score = dense_results[0]["score"] if dense_results else 0.0
-    # if best_score < score_threshold:
-    #     print(f"  ⚠ Semantic best score ({best_score:.3f}) < threshold ({score_threshold})")
-    #     fallback = pageindex_search(query, top_k=top_k)
-    #     if fallback:
-    #         return fallback
-    #
-    # return final_results[:top_k]
-    raise NotImplementedError("Implement retrieve")
+    # Step 1: chạy 2 nhánh retrieval. Lấy dư (top_k * 2) để RRF có đủ nguyên liệu gộp.
+    # Bọc try/except để 1 nhánh hỏng (chưa index, thiếu thư viện) không giết cả pipeline.
+    try:
+        dense_results = semantic_search(query, top_k=top_k * 2)
+    except Exception as e:
+        print(f"  ⚠ Semantic search lỗi: {type(e).__name__}: {e}")
+        dense_results = []
+
+    try:
+        sparse_results = lexical_search(query, top_k=top_k * 2)
+    except Exception as e:
+        print(f"  ⚠ Lexical search lỗi: {type(e).__name__}: {e}")
+        sparse_results = []
+
+    # Step 2: gộp 2 danh sách bằng RRF (chỉ dựa vào thứ hạng nên không cần chuẩn hoá điểm)
+    merged = rerank_rrf([dense_results, sparse_results], top_k=top_k * 2)
+    for item in merged:
+        item["source"] = "hybrid"
+
+    # Step 3: rerank lần cuối để chọn ra top_k
+    if use_reranking and merged:
+        final_results = rerank(query, merged, top_k=top_k, method=RERANK_METHOD)
+        for item in final_results:
+            item.setdefault("source", "hybrid")
+    else:
+        final_results = merged[:top_k]
+
+    # Step 4: quyết định fallback bằng ĐIỂM COSINE GỐC, KHÔNG phải điểm RRF.
+    # dense_results đã sort giảm dần nên phần tử [0] là điểm cao nhất.
+    best_score = dense_results[0]["score"] if dense_results else 0.0
+    if best_score < score_threshold:
+        print(f"  ⚠ Semantic best score ({best_score:.3f}) < threshold ({score_threshold})"
+              " → thử fallback PageIndex")
+        fallback = pageindex_search(query, top_k=top_k)
+        if fallback:
+            return fallback[:top_k]
+        # PageIndex chưa cấu hình / không có kết quả → vẫn trả hybrid để không rỗng
+
+    return final_results[:top_k]
+
+
+def calibrate_threshold(relevant_queries: list[str], off_topic_queries: list[str]):
+    """
+    Công cụ tự đo ngưỡng SCORE_THRESHOLD cho corpus của nhóm bạn.
+
+    Cách dùng: đưa vào vài câu chắc chắn có trong tài liệu và vài câu chắc chắn lạc đề,
+    rồi chọn một số nằm giữa 2 vùng điểm in ra.
+    """
+    def best(q: str) -> float:
+        try:
+            hits = semantic_search(q, top_k=1)
+            return hits[0]["score"] if hits else 0.0
+        except Exception:
+            return 0.0
+
+    print("\n--- Câu hỏi ĐÚNG chủ đề ---")
+    relevant_scores = []
+    for q in relevant_queries:
+        s = best(q)
+        relevant_scores.append(s)
+        print(f"  {s:.3f}  {q}")
+
+    print("\n--- Câu hỏi LẠC ĐỀ ---")
+    off_scores = []
+    for q in off_topic_queries:
+        s = best(q)
+        off_scores.append(s)
+        print(f"  {s:.3f}  {q}")
+
+    if relevant_scores and off_scores:
+        low = min(relevant_scores)
+        high = max(off_scores)
+        print(f"\nGợi ý threshold: khoảng {(low + high) / 2:.2f} "
+              f"(thấp nhất của nhóm đúng: {low:.3f}, cao nhất của nhóm lạc đề: {high:.3f})")
 
 
 if __name__ == "__main__":
@@ -120,3 +170,19 @@ if __name__ == "__main__":
         results = retrieve(q, top_k=3)
         for i, r in enumerate(results, 1):
             print(f"  {i}. [{r['score']:.3f}] [{r['source']}] {r['content'][:80]}...")
+
+    print("\n" + "=" * 60)
+    print("Calibrate threshold")
+    print("=" * 60)
+    calibrate_threshold(
+        relevant_queries=[
+            "tuition fee payment",
+            "scholarship eligibility",
+            "library opening hours",
+        ],
+        off_topic_queries=[
+            "xyzabc123nonsense",
+            "cách nấu phở bò",
+            "premier league top scorer",
+        ],
+    )
