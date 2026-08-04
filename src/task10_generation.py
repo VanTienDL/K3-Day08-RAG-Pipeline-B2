@@ -52,13 +52,16 @@ NO_EVIDENCE_ANSWER = "Tôi không thể xác minh thông tin này từ nguồn h
 # SYSTEM PROMPT
 # =============================================================================
 
-SYSTEM_PROMPT = """Bạn là trợ lý trả lời câu hỏi về dịch vụ và chính sách đại học
+# Câu trả lời "không đủ bằng chứng" được ghép từ NO_EVIDENCE_ANSWER để chuỗi LLM sinh
+# ra khớp CHÍNH XÁC chuỗi mà code trả về ở nhánh không có kết quả — Task 5/6 (eval)
+# đối chiếu bằng so khớp chuỗi, lệch một dấu chấm là tính thành 2 câu trả lời khác nhau.
+SYSTEM_PROMPT = f"""Bạn là trợ lý trả lời câu hỏi về dịch vụ và chính sách đại học
 (học phí, học bổng, ký túc xá, thư viện, đăng ký học phần).
 
 Quy tắc bắt buộc:
 1. Chỉ sử dụng thông tin từ context được cung cấp — KHÔNG bịa đặt
 2. Mỗi khẳng định phải có trích dẫn ngay sau, ví dụ: [Tuition Fees, 2026]
-3. Nếu context không đủ thông tin → trả lời: "Tôi không thể xác minh thông tin này từ nguồn hiện có"
+3. Nếu context không đủ thông tin → trả lời đúng câu: "{NO_EVIDENCE_ANSWER}"
 4. Trả lời bằng tiếng Việt, có cấu trúc rõ ràng theo đoạn văn
 5. Không suy luận hay mở rộng ngoài những gì được nêu trong context"""
 
@@ -110,7 +113,16 @@ def format_context(chunks: list[dict]) -> str:
         Formatted context string.
     """
     context_parts: list[str] = []
-    for i, chunk in enumerate(chunks, 1):
+    # Đánh số theo tài liệu THỰC SỰ đưa vào prompt. Dùng chỉ số của vòng lặp thì chunk
+    # rỗng bị bỏ qua sẽ để lại lỗ hổng ("Tài liệu 1", "Tài liệu 3") và LLM trích dẫn
+    # theo số thứ tự không khớp với danh sách nguồn hiển thị cho người dùng.
+    i = 0
+    for chunk in chunks:
+        content = str(chunk.get("content") or "").strip()
+        if not content:
+            continue
+
+        i += 1
         metadata = chunk.get("metadata") or {}
         source = _first_value(
             metadata, "source", "title", "filename", "file_name", default=f"Nguồn {i}"
@@ -119,10 +131,6 @@ def format_context(chunks: list[dict]) -> str:
         year = _first_value(metadata, "year", "published_year", "date", default="không rõ năm")
         doc_type = _first_value(metadata, "type", "doc_type", default="không rõ")
         url = _first_value(metadata, "url", "source_url", default="Không có")
-        content = str(chunk.get("content") or "").strip()
-
-        if not content:
-            continue
 
         context_parts.append(
             f"[Tài liệu {i}]\n"
@@ -147,11 +155,24 @@ def _first_value(metadata: dict[str, Any], *keys: str, default: str) -> str:
 
 
 def _create_llm_client():
-    """Tạo OpenAI-compatible client cho OpenRouter hoặc OpenAI."""
-    from openai import OpenAI
+    """
+    Tạo OpenAI-compatible client cho OpenRouter hoặc OpenAI.
 
+    Trả (None, None) khi không có key HOẶC chưa cài SDK — nơi gọi sẽ quay về
+    _extractive_answer(). Không có key thì không được import openai: máy chưa cài
+    SDK sẽ ném ImportError và giết luôn nhánh dự phòng.
+    """
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    if not openrouter_key and not openai_key:
+        return None, None
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print("  ⚠ Chưa cài SDK: pip install openai — dùng câu trả lời trích dẫn nguyên văn")
+        return None, None
 
     if openrouter_key:
         return OpenAI(
@@ -251,7 +272,14 @@ def generate_with_citation(query: str, top_k: int = TOP_K) -> dict:
         f"CONTEXT:\n{context}\n\n"
         f"CÂU HỎI:\n{query}"
     )
-    client, model = _create_llm_client()
+    try:
+        client, model = _create_llm_client()
+    except Exception as exc:
+        # Cấu hình hỏng (base_url sai, biến môi trường proxy lỗi...) không được phép
+        # làm hỏng cả câu trả lời — vẫn còn nhánh trích dẫn nguyên văn.
+        print(f"  ⚠ Không tạo được LLM client: {type(exc).__name__}: {exc}")
+        client, model = None, None
+
     if client is None:
         answer = _extractive_answer(chunks)
     else:
