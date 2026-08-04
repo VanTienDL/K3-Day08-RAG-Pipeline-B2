@@ -38,10 +38,13 @@ from .task8_pageindex_vectorless import pageindex_search
 # CONFIGURATION
 # =============================================================================
 
-# Ngưỡng này được đo trên corpus RMIT + bge-m3 (xem hàm calibrate_threshold bên dưới):
-# câu hỏi đúng chủ đề cho cosine ~0.55-0.75, câu lạc đề/vô nghĩa ~0.25-0.40.
-# 0.48 nằm giữa 2 vùng. ĐỔI CORPUS hoặc ĐỔI EMBEDDING MODEL thì phải đo lại.
-SCORE_THRESHOLD = 0.48  # Nếu best score (cosine gốc) < threshold → fallback PageIndex
+# ⚠ CHƯA ĐO — 0.35 chỉ là giá trị tạm cho text-embedding-3-small.
+# Ngưỡng 0.48 cũ đo trên bge-m3, KHÔNG dùng lại được: mỗi embedding model cho một
+# dải điểm cosine khác nhau, model OpenAI thường cho điểm thấp hơn bge-m3 rõ rệt nên
+# giữ 0.48 sẽ khiến fallback kích hoạt gần như mọi câu hỏi.
+# BẮT BUỘC: sau khi index xong, chạy `python -m src.task9_retrieval_pipeline` để
+# calibrate_threshold() in ra 2 vùng điểm, rồi thay số ở đây bằng số nằm giữa.
+SCORE_THRESHOLD = 0.35  # Nếu best score (cosine gốc) < threshold → fallback PageIndex
 DEFAULT_TOP_K = 5
 RERANK_METHOD = "rrf"  # "cross_encoder" | "mmr" | "rrf"
 

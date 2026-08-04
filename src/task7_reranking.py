@@ -244,11 +244,11 @@ def rerank(
 def _embed(text: str) -> list[float]:
     """Embed 1 chuỗi bằng đúng model của Task 4 (dùng cho MMR)."""
     try:
-        from .task4_chunking_indexing import get_embedding_model
+        from .task4_chunking_indexing import embed_query
     except ImportError:
-        from src.task4_chunking_indexing import get_embedding_model
+        from src.task4_chunking_indexing import embed_query
 
-    return get_embedding_model().encode(text, normalize_embeddings=True).tolist()
+    return embed_query(text)
 
 
 def _attach_embeddings(candidates: list[dict]) -> list[dict]:
@@ -256,16 +256,13 @@ def _attach_embeddings(candidates: list[dict]) -> list[dict]:
     missing = [c for c in candidates if "embedding" not in c]
     if missing:
         try:
-            from .task4_chunking_indexing import get_embedding_model
+            from .task4_chunking_indexing import embed_texts
         except ImportError:
-            from src.task4_chunking_indexing import get_embedding_model
+            from src.task4_chunking_indexing import embed_texts
 
-        model = get_embedding_model()
-        vectors = model.encode(
-            [c["content"] for c in missing], normalize_embeddings=True
-        )
-        for c, vec in zip(missing, vectors):
-            c["embedding"] = vec.tolist()
+        # Gộp 1 request cho toàn bộ candidate thiếu vector, không gọi lẻ từng cái
+        for c, vec in zip(missing, embed_texts([c["content"] for c in missing])):
+            c["embedding"] = vec
     return candidates
 
 

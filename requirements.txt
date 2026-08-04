@@ -12,8 +12,10 @@ fpdf2>=2.7.0
 
 # Task 4 - Chunking & Indexing
 langchain-text-splitters>=0.2.0
-sentence-transformers>=2.2.0
 chromadb>=0.5.0
+# Da bo sentence-transformers: no keo theo torch (~1GB) + model bge-m3 (~2.2GB).
+# Embedding gio goi API OpenAI text-embedding-3-small (xem src/task4_chunking_indexing.py).
+# Muon quay lai chay model tai cho thi them lai dong: sentence-transformers>=2.2.0
 
 # Task 6 - BM25 + TF-IDF
 rank-bm25>=0.2.2

@@ -21,9 +21,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 try:
-    from .task4_chunking_indexing import get_collection, get_embedding_model
+    from .task4_chunking_indexing import embed_query, get_collection
 except ImportError:  # khi chạy trực tiếp `python src/task5_semantic_search.py`
-    from src.task4_chunking_indexing import get_collection, get_embedding_model
+    from src.task4_chunking_indexing import embed_query, get_collection
 
 
 def semantic_search(query: str, top_k: int = 10) -> list[dict]:
@@ -57,9 +57,8 @@ def semantic_search(query: str, top_k: int = 10) -> list[dict]:
         print(f"⚠ Collection đang dùng space='{space}' thay vì 'cosine' — xoá chroma_db/ "
               "rồi chạy lại `python -m src.task4_chunking_indexing`")
 
-    # Bước 1: embed query bằng ĐÚNG model đã dùng ở Task 4, cùng cách normalize
-    model = get_embedding_model()
-    query_vector = model.encode(query, normalize_embeddings=True).tolist()
+    # Bước 1: embed query bằng ĐÚNG model đã dùng ở Task 4 (vector phải cùng không gian)
+    query_vector = embed_query(query)
 
     # Bước 2: truy vấn Chroma. n_results không được vượt số chunk đang có
     results = collection.query(

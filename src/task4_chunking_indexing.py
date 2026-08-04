@@ -37,6 +37,12 @@ Chạy:
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Bắt buộc: embedding gọi API nên cần OPENAI_API_KEY. Chạy `python -m src.task4_...`
+# trực tiếp mà không load .env thì key sẽ không thấy được.
+load_dotenv()
+
 STANDARDIZED_DIR = Path(__file__).parent.parent / "data" / "standardized"
 CHROMA_DIR = Path(__file__).parent.parent / "chroma_db"
 
@@ -53,14 +59,14 @@ CHUNK_SIZE = 800        # ~200 token: đủ trọn 1-2 đoạn chính sách, ch�
 CHUNK_OVERLAP = 100     # 12.5% overlap: câu nằm ở ranh giới vẫn xuất hiện đủ ngữ cảnh ở 1 chunk
 CHUNKING_METHOD = "recursive"  # "recursive" | "markdown_header" | "semantic"
 
-# Embedding: BAAI/bge-m3.
+# Embedding: OpenAI text-embedding-3-small (gọi qua API, KHÔNG chạy model tại chỗ).
 # Vì sao: tài liệu là tiếng Anh (trang trường) nhưng câu hỏi của sinh viên là tiếng Việt.
-# bge-m3 là model đa ngữ, embed 2 ngôn ngữ vào cùng không gian vector nên hỏi tiếng Việt
-# vẫn match được đoạn tiếng Anh. Model nhẹ hơn (all-MiniLM-L6-v2) chỉ mạnh với tiếng Anh.
-# Máy yếu / mạng chậm: đổi sang "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-# (~470MB, 384 dim) — nhớ sửa EMBEDDING_DIM cho khớp và xoá chroma_db/ để index lại.
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
-EMBEDDING_DIM = 1024
+# Model này đa ngữ nên hỏi tiếng Việt vẫn match được đoạn tiếng Anh — tương đương
+# BAAI/bge-m3 về mặt này, nhưng không phải cài torch (~1GB) và tải model (~2.2GB).
+# Đánh đổi: mỗi lần search đều cần mạng, và cần OPENAI_API_KEY thật (key OpenRouter
+# KHÔNG dùng được — OpenRouter không có endpoint embeddings).
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_DIM = 1536  # text-embedding-3-large là 3072 — đổi model nhớ sửa số này
 
 # Vector store: ChromaDB — chạy local, persist ra thư mục, không cần Docker.
 VECTOR_STORE = "chromadb"
@@ -77,18 +83,59 @@ _chroma_client = None
 
 def get_embedding_model():
     """
-    Trả về SentenceTransformer đã cache.
+    Trả về OpenAI client đã cache (dùng cho endpoint embeddings).
 
-    Cache ở cấp module vì load bge-m3 mất vài giây + ~2GB RAM; Task 5 gọi hàm này
-    mỗi lần search nên không thể load lại từ đầu.
+    Cache ở cấp module vì Task 5 gọi mỗi lần search — tạo client mới liên tục sẽ
+    mở lại kết nối HTTP không cần thiết.
+
+    Lưu ý: PHẢI là key OpenAI thật (sk-...). OpenRouter chỉ phục vụ chat completions,
+    không có endpoint /v1/embeddings, nên OPENROUTER_API_KEY không dùng được ở đây.
     """
     global _embedding_model
     if _embedding_model is None:
-        from sentence_transformers import SentenceTransformer
+        from openai import OpenAI
 
-        print(f"Loading embedding model: {EMBEDDING_MODEL} (lần đầu sẽ tải model về máy)")
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL)
+        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError(
+                "Thiếu OPENAI_API_KEY trong .env — embedding không chạy được. "
+                "Key OpenRouter KHÔNG thay thế được vì OpenRouter không có endpoint embeddings."
+            )
+        _embedding_model = OpenAI(api_key=api_key, timeout=60.0)
     return _embedding_model
+
+
+def embed_texts(texts: list[str], batch_size: int = 100) -> list[list[float]]:
+    """
+    Embed nhiều đoạn văn bằng 1 loạt request tới OpenAI.
+
+    Gửi theo lô thay vì từng đoạn một: 300 chunk mà gọi 300 request thì vừa chậm
+    vừa dễ dính rate limit, gộp thành 3 request thì xong trong vài giây.
+
+    Vector OpenAI trả về đã chuẩn hoá sẵn về độ dài 1, nên cosine distance của Chroma
+    đúng bằng 1 - cosine similarity — công thức score ở Task 5 giữ nguyên, không cần
+    normalize thủ công như hồi dùng sentence-transformers.
+    """
+    if not texts:
+        return []
+
+    client = get_embedding_model()
+    vectors: list[list[float]] = []
+
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start + batch_size]
+        response = client.embeddings.create(model=EMBEDDING_MODEL, input=batch)
+        # API không đảm bảo thứ tự trả về -> sắp lại theo index cho chắc
+        for item in sorted(response.data, key=lambda d: d.index):
+            vectors.append(item.embedding)
+        print(f"  ... embedded {min(start + batch_size, len(texts))}/{len(texts)}")
+
+    return vectors
+
+
+def embed_query(text: str) -> list[float]:
+    """Embed 1 câu truy vấn. Dùng chung model với lúc index để vector cùng không gian."""
+    return embed_texts([text])[0]
 
 
 def get_client():
@@ -189,27 +236,19 @@ def embed_chunks(chunks: list[dict]) -> list[dict]:
     if not chunks:
         return chunks
 
-    model = get_embedding_model()
+    embeddings = embed_texts([c["content"] for c in chunks])
 
     # Đổi EMBEDDING_MODEL mà quên sửa EMBEDDING_DIM là lỗi hay gặp: Chroma sẽ nhận
     # vector sai chiều và báo lỗi khó hiểu ở tận bước index. Chặn ngay tại đây.
-    actual_dim = model.get_sentence_embedding_dimension()
+    actual_dim = len(embeddings[0])
     if actual_dim != EMBEDDING_DIM:
         raise ValueError(
             f"EMBEDDING_DIM={EMBEDDING_DIM} không khớp model {EMBEDDING_MODEL} "
             f"(thật sự là {actual_dim}). Sửa EMBEDDING_DIM và xoá chroma_db/ để index lại."
         )
 
-    texts = [c["content"] for c in chunks]
-
-    # normalize_embeddings=True: vector về độ dài 1 -> cosine distance của Chroma
-    # đúng bằng 1 - cosine similarity, nhờ đó score ở Task 5 nằm gọn trong [0,1].
-    embeddings = model.encode(
-        texts, batch_size=16, show_progress_bar=True, normalize_embeddings=True
-    )
-
     for chunk, emb in zip(chunks, embeddings):
-        chunk["embedding"] = emb.tolist()
+        chunk["embedding"] = emb
 
     return chunks
 
