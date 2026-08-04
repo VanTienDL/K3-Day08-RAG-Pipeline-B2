@@ -550,19 +550,60 @@ run_dashboard()
 ### Kiến Trúc Hệ Thống
 
 ```
-[Vẽ diagram kiến trúc ở đây]
+┌─────────────────────────────────────────────────────────────┐
+│                   University Services RAG Chatbot            │
+│                   (Streamlit / Chainlit UI)                  │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ User Query
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Task 9 — Retrieval Pipeline                │
+│                                                             │
+│  ┌─────────────────┐        ┌──────────────────────────┐   │
+│  │ Task 5: Semantic │        │  Task 6: Lexical Search  │   │
+│  │ Search (ChromaDB)│        │  (BM25 / rank-bm25)      │   │
+│  │  BAAI/bge-m3     │        │                          │   │
+│  └────────┬────────┘        └────────────┬─────────────┘   │
+│           │                              │                   │
+│           └──────────┬───────────────────┘                   │
+│                      ▼                                       │
+│            Task 7: Reranking                                 │
+│            (Jina / MMR / RRF)                               │
+│                      │                                       │
+│          score < threshold?                                  │
+│           ├─ No  → Top-K Results                            │
+│           └─ Yes → Task 8: PageIndex Vectorless Fallback    │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ Context Chunks
+                       ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Task 10 — Generation với Citation              │
+│  Reorder (Lost-in-Middle) → Prompt Injection → LLM → Answer │
+└─────────────────────────────────────────────────────────────┘
+
+Data Pipeline:
+  Task 1: PDF/DOCX (data/landing/legal/)  ─┐
+  Task 2: JSON/HTML (data/landing/news/)  ──┤
+                                            ▼
+                                       Task 3: MarkItDown
+                                       (data/standardized/)
+                                            │
+                                            ▼
+                                  Task 4: Chunking & Indexing
+                                  (ChromaDB — chroma_db/)
 ```
 
 ---
 
 ### Phân Công Công Việc
 
-| Thành viên | MSSV | Nhiệm vụ | Trạng thái |
-|-----------|------|----------|------------|
-| | | | |
-| | | | |
-| | | | |
-| | | | |
+| STT | Thành viên | Mã học viên | Vai trò | Trạng thái |
+|-----|-----------|-------------|---------|------------|
+| 1 | Nguyễn Văn Tiến | 2A202601433 | Role 1 | ✅ |
+| 2 | Trần Thị Thanh Tâm | 2A202601267 | Role 2 | ✅ |
+| 3 | Nguyễn Duy Hải Bằng | 2A202601225 | Role 3 | ✅ |
+| 4 | Huỳnh Hoàng Việt | 2A202601105 | Role 4 | ✅ |
+| 5 | Tạ Thị Nga | 2A202601125 | Role 5 | ✅ |
 
 ---
 
