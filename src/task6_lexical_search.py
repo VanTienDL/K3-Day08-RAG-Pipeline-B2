@@ -52,7 +52,12 @@ def load_corpus() -> list[dict]:
         print(f"⚠ Không đọc được ChromaDB ({type(e).__name__}) — chunk lại từ file .md")
 
     # Dự phòng: chưa index thì chunk trực tiếp từ data/standardized/
-    return chunk_documents(load_documents())
+    try:
+        return chunk_documents(load_documents())
+    except Exception as e:
+        print(f"⚠ Không dựng được corpus dự phòng ({type(e).__name__}: {e}) — "
+              "kiểm tra `pip install -r requirements.txt` và chạy Task 3-4 trước")
+        return []
 
 
 def tokenize(text: str) -> list[str]:
@@ -72,10 +77,10 @@ def build_bm25_index(corpus: list[dict]):
     Args:
         corpus: List of {'content': str, 'metadata': dict}
     """
-    from rank_bm25 import BM25Okapi
-
     if not corpus:
         return None
+
+    from rank_bm25 import BM25Okapi
 
     tokenized_corpus = [tokenize(doc["content"]) for doc in corpus]
     return BM25Okapi(tokenized_corpus)  # k1=1.5, b=0.75 mặc định
@@ -83,10 +88,14 @@ def build_bm25_index(corpus: list[dict]):
 
 def _ensure_index():
     """Nạp corpus + dựng index ở lần gọi đầu tiên, các lần sau dùng lại."""
-    global CORPUS, _bm25
+    global CORPUS, _bm25, _tfidf_vectorizer, _tfidf_matrix
     if _bm25 is None:
         CORPUS = load_corpus()
         _bm25 = build_bm25_index(CORPUS)
+        # CORPUS vừa đổi -> ma trận TF-IDF cũ (nếu có) đánh số dòng theo corpus cũ,
+        # dùng tiếp sẽ trả về nhầm chunk. Xoá cache để nó dựng lại.
+        _tfidf_vectorizer = None
+        _tfidf_matrix = None
         print(f"✓ BM25 index: {len(CORPUS)} chunks")
     return _bm25
 
@@ -123,7 +132,8 @@ def lexical_search(query: str, top_k: int = 10) -> list[dict]:
         results.append({
             "content": CORPUS[idx]["content"],
             "score": round(float(scores[idx]), 4),
-            "metadata": CORPUS[idx]["metadata"],
+            # copy: Task 9/10 có thể thêm key vào result, không được đụng vào CORPUS gốc
+            "metadata": dict(CORPUS[idx]["metadata"]),
         })
 
     return results
@@ -171,7 +181,7 @@ def tfidf_search(query: str, top_k: int = 10) -> list[dict]:
         results.append({
             "content": CORPUS[idx]["content"],
             "score": round(float(scores[idx]), 4),
-            "metadata": CORPUS[idx]["metadata"],
+            "metadata": dict(CORPUS[idx]["metadata"]),
         })
 
     return results

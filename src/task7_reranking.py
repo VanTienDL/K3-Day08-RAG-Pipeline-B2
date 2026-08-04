@@ -182,7 +182,10 @@ def rerank_rrf(
     results = []
     for content, score in sorted_items[:top_k]:
         item = dict(content_map[content])
-        item["dense_score"] = item.get("score")  # giữ điểm gốc để Task 9 xét threshold
+        # Giữ điểm retrieval GỐC (cosine hoặc BM25) để debug/hiển thị.
+        # setdefault: Task 9 chạy RRF 2 lần (merge rồi rerank) — nếu gán đè thì lần 2
+        # sẽ ghi điểm RRF của lần 1 vào đây và mất luôn điểm gốc.
+        item.setdefault("orig_score", item.get("score"))
         item["score"] = round(score, 6)
         results.append(item)
 

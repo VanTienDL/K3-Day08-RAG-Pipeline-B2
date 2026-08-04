@@ -48,11 +48,15 @@ def _get_client():
     if not PAGEINDEX_API_KEY:
         print("⚠ Chưa có PAGEINDEX_API_KEY trong .env — bỏ qua PageIndex")
         return None
+    # Tuỳ phiên bản SDK, class nằm ở `pageindex` hoặc `pageindex.client`
     try:
-        from pageindex.client import PageIndexClient
+        from pageindex import PageIndexClient
     except ImportError:
-        print("⚠ Chưa cài SDK: pip install pageindex")
-        return None
+        try:
+            from pageindex.client import PageIndexClient
+        except ImportError:
+            print("⚠ Chưa cài SDK: pip install pageindex")
+            return None
     return PageIndexClient(api_key=PAGEINDEX_API_KEY)
 
 
@@ -73,20 +77,26 @@ def _markdown_to_pdf(md_file: Path, out_dir: Path) -> Path:
     return pdf_path
 
 
-def upload_documents():
+def upload_documents(force: bool = False):
     """
-    Upload toàn bộ markdown documents lên PageIndex.
+    Upload markdown documents lên PageIndex.
 
     Ghi lại {tên file: doc_id} vào data/pageindex_docs.json để pageindex_search() dùng.
+    File nào đã có doc_id thì bỏ qua (tiết kiệm quota + thời gian); truyền force=True
+    để upload lại toàn bộ.
     """
     client = _get_client()
     if client is None:
         return {}
 
     tmp_dir = Path(__file__).parent.parent / "data" / "_pageindex_pdf"
-    doc_ids = {}
+    # Bắt đầu từ map cũ để 1 lần chạy lỗi giữa chừng không xoá mất doc_id đã có
+    doc_ids = {} if force else _load_doc_ids()
 
     for md_file in sorted(STANDARDIZED_DIR.rglob("*.md")):
+        if not force and md_file.name in doc_ids:
+            print(f"  → Bỏ qua (đã upload): {md_file.name}")
+            continue
         try:
             pdf_path = _markdown_to_pdf(md_file, tmp_dir)
             resp = client.submit_document(str(pdf_path))
@@ -129,6 +139,10 @@ def _wait_for_retrieval(client, retrieval_id: str, timeout: int = 60) -> dict:
             return retrieval
         if status in ("failed", "error"):
             raise RuntimeError(f"PageIndex retrieval thất bại: {retrieval}")
+        # Vài phiên bản API không trả field "status" mà trả thẳng kết quả —
+        # không check thì vòng lặp treo đủ 60s cho MỖI document.
+        if retrieval.get("retrieved_nodes"):
+            return retrieval
         time.sleep(2)
     raise TimeoutError("PageIndex retrieval quá thời gian chờ")
 
@@ -168,6 +182,9 @@ def pageindex_search(query: str, top_k: int = 5) -> list[dict]:
         try:
             resp = client.submit_query(doc_id=doc_id, query=query)
             retrieval_id = resp.get("retrieval_id") or resp.get("id")
+            if not retrieval_id:
+                print(f"  ✗ Không lấy được retrieval_id cho {filename}: {resp}")
+                continue
             retrieval = _wait_for_retrieval(client, retrieval_id)
 
             if DEBUG:
