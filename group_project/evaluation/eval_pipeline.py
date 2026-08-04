@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
 from pathlib import Path
 
 # Add src to path
@@ -69,14 +70,25 @@ def main():
     }
     eval_dataset = Dataset.from_dict(dataset_dict)
     
-    api_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY")
-    base_url = "https://openrouter.ai/api/v1" if os.getenv("OPENROUTER_API_KEY") else None
-    # For evaluate, Ragas typically works better with a proper LLM model. Llama might be weak for evaluation, 
-    # but we will use the default config.
-    model_name = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    api_key = openrouter_key or openai_key
     
-    llm = ChatOpenAI(model=model_name, api_key=api_key, base_url=base_url)
-    embeddings = OpenAIEmbeddings()
+    if not api_key:
+        print("LỖI: Chưa tìm thấy OPENROUTER_API_KEY hoặc OPENAI_API_KEY trong file .env")
+        return
+
+    if openrouter_key:
+        base_url = "https://openrouter.ai/api/v1"
+        model_name = os.getenv("LLM_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
+    else:
+        base_url = None
+        model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    llm = ChatOpenAI(model=model_name, openai_api_key=api_key, openai_api_base=base_url)
+    
+    # Use real OpenAI embeddings if available
+    embeddings = OpenAIEmbeddings(openai_api_key=api_key)
     
     # Ragas 0.2.x wrapper
     try:

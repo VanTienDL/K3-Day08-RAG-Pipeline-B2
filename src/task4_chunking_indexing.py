@@ -35,6 +35,12 @@ Chạy:
 """
 
 import os
+import sys
+
+# Windows UTF-8 fix
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 from pathlib import Path
 
 from dotenv import load_dotenv
