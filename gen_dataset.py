@@ -1,0 +1,135 @@
+import json
+import os
+
+data = [
+    {
+        'question': 'Học phí học kỳ hè được tính như thế nào so với học phí học kỳ chính?',
+        'expected_answer': 'Học phí học kỳ hè được tính bằng 1,5 lần mức học phí quy định tại mục 1, 2, 3 của Phụ lục (trừ một số học phần được Giám đốc quyết định tính bằng mức bình thường).',
+        'expected_context': 'Mức học phí học kỳ hè được tính bằng 1,5 lần mức học phí quy định tại mục 1, 2, 3 của Phụ lục này, ngoại trừ một số học phần được tính bằng mức học phí tại mục 1, 2, 3 của Phụ lục này. Điều này do Giám đốc đại học quyết định.',
+        'source_file': 'QD HOC PHI - 2025-2026-final.md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Điều kiện GPA tối thiểu để sinh viên từ học kỳ 2 trở đi được xét Học bổng Trần Đại Nghĩa là bao nhiêu?',
+        'expected_answer': 'Sinh viên phải có điểm học tập trung bình học kỳ liền trước (GPA) ≥ 2,0 và điểm rèn luyện học kỳ liền trước ≥ 65.',
+        'expected_context': 'Sinh viên khác (từ học kỳ 2 trở đi) đạt đồng thời các điều kiện sau:\na) Đang trong thời gian học tập theo thiết kế chương trình đào tạo chuẩn;\nb) Điểm học tập trung bình của học kỳ liền trước (GPA) ≥ 2,0;\nc) Điểm rèn luyện của học kỳ liền trước ≥ 65.',
+        'source_file': 'Quy định Học bổng Trần Đại Nghĩa 2025.docx.md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Sinh viên bị xếp loại rèn luyện Yếu hoặc Kém trong bao nhiêu học kỳ liên tiếp sẽ bị hạn chế đăng ký học tập?',
+        'expected_answer': 'Sinh viên bị xếp loại rèn luyện Yếu hoặc Kém trong hai học kỳ liên tiếp sẽ bị hạn chế đăng ký học tập tương đương cảnh báo học tập mức 2.',
+        'expected_context': 'Sinh viên bị xếp loại rèn luyện Yếu/Kém trong hai học kỳ liên tiếp bị hạn chế đăng\nký học tập tương đương cảnh báo học tập mức 2.',
+        'source_file': 'QĐ đánh giá điểm rèn luyện sinh viên 2023-Ký số (2).md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Có bao nhiêu mức xếp loại điểm rèn luyện và đó là những mức nào?',
+        'expected_answer': 'Có 6 mức xếp loại: Xuất sắc (90-100), Tốt (80-dưới 90), Khá (65-dưới 80), Trung bình (50-dưới 65), Yếu (35-dưới 50) và Kém (dưới 35).',
+        'expected_context': 'Từ 90 đến 100 điểm Xuất sắc\n2 Từ 80 đến dưới 90 điểm Tốt\n3 Từ 65 đến dưới 80 điểm Khá\n4 Từ 50 đến dưới 65 điểm Trung bình\n5 Từ 35 đến dưới 50 điểm Yếu\n\n2\n6 Dưới 35 điểm Kém',
+        'source_file': 'QĐ đánh giá điểm rèn luyện sinh viên 2023-Ký số (2).md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Học bổng Trần Đại Nghĩa dành cho sinh viên gặp tai nạn, rủi ro đột xuất (quy định tại khoản 3 và khoản 4 Điều 5) có mấy mức và giá trị là bao nhiêu?',
+        'expected_answer': 'Có 2 mức là 5.000.000 đồng và 10.000.000 đồng.',
+        'expected_context': 'Đối tượng quy định tại khoản 3 và khoản 4 Điều 5: Học bổng có 2 mức tương\nứng 5.000.000 đồng (năm triệu đồng) và 10.000.000 đồng (mười triệu đồng).',
+        'source_file': 'Quy định Học bổng Trần Đại Nghĩa 2025.docx.md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Sinh viên diện chế độ chính sách được miễn, giảm học phí theo quy định có được xét Học bổng Trần Đại Nghĩa (thuộc khoản 1 và khoản 2 Điều 5) hay không?',
+        'expected_answer': 'Không, sinh viên diện miễn, giảm học phí theo quy định sẽ không được xét cấp Học bổng Trần Đại Nghĩa thuộc đối tượng khoản 1 và khoản 2 Điều 5.',
+        'expected_context': 'Không xét, cấp Học bổng Trần Đại Nghĩa cho sinh viên diện chế độ chính\nsách được miễn, giảm học phí theo quy định của Nhà nước thuộc các đối tượng quy\nđịnh tại khoản 1 và khoản 2 Điều 5.',
+        'source_file': 'Quy định Học bổng Trần Đại Nghĩa 2025.docx.md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Trong đánh giá điểm rèn luyện, điểm rèn luyện của học kỳ được tính như thế nào?',
+        'expected_answer': 'Điểm rèn luyện của học kỳ là tổng điểm đạt được của các nội dung đánh giá chi tiết.',
+        'expected_context': 'Điểm rèn luyện của học kỳ là tổng điểm đạt được của các nội dung đánh giá chi\ntiết.',
+        'source_file': 'QĐ đánh giá điểm rèn luyện sinh viên 2023-Ký số (2).md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Học phí được tính dựa trên đơn vị gì?',
+        'expected_answer': 'Học phí được tính theo số tín chỉ học phí (TCHP) của các học phần được sinh viên đăng ký học ở mỗi học kỳ.',
+        'expected_context': 'Học phí được tính theo số tín chỉ học phí (TCHP) của các học phần được sinh viên đăng\nký học ở mỗi học kỳ.',
+        'source_file': 'QD HOC PHI - 2025-2026-final.md',
+        'category': 'legal'
+    },
+    {
+        'question': 'Mức học bổng sau đại học (mức 1) của trường áp dụng từ năm học 2022-2023 tương đương với bao nhiêu phần trăm học phí?',
+        'expected_answer': 'Mức 1 tương ứng với 100% học phí chương trình đào tạo chuẩn.',
+        'expected_context': 'Trường áp dụng hai mức học bổng: mức 1 và mức 2\n\n- Mức 1 tương ứng với 100% học phí chương trình đào tạo chuẩn.\n\n- Mức 2 tương ứng với 50% học phí chương trình đào tạo chuẩn.',
+        'source_file': 'article_1.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Từ năm học 2023-2024, Điểm học phần (ĐHP) của môn Toán cao cấp do Khoa Toán Tin phụ trách được tính bằng công thức nào?',
+        'expected_answer': 'ĐHP = 0.5 × (ĐQT + ĐTCK), trong đó ĐQT là Điểm quá trình và ĐTCK là Điểm thi cuối kỳ.',
+        'expected_context': 'Từ năm học 2023-2024, mỗi học phần  Toán cao cấp do Khoa Toán Tin phụ trách có Điểm học phần (ĐHP), thang điểm 10, được đánh giá từ hai điểm thành phần là **Điểm quá trình** (ĐQT) có trọng số 50% và **Điểm thi cuối kỳ** (ĐTCK) có trọng số 50%.\n\n**ĐHP = 0.5× (ĐQT + ĐTCK).**',
+        'source_file': 'article_2.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Sinh viên ngành Toán Tin có ưu thế đặc biệt khi tuyển dụng vào các vị trí nào?',
+        'expected_answer': 'Họ có ưu thế đặc biệt khi tuyển dụng vào các vị trí như: chuyên gia phân tích dự báo tài chính (quant), định phí bảo hiểm (actuary) và chuyên gia quy hoạch.',
+        'expected_context': 'Có những việc mà **họ được ưu thế đặc biệt khi tuyển dụng** như chuyên gia phân tích dự báo tài chính (quant), định phí bảo hiểm (actuary), chuyên gia quy hoạch, …',
+        'source_file': 'article_3.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Sinh viên có tối đa bao nhiêu thời gian để hoàn thành một bài đánh giá liên tục môn Toán cao cấp kể từ khi bài được mở?',
+        'expected_answer': 'Sinh viên có tối đa 2 tuần để làm 1 bài đánh giá liên tục kể từ khi mở trên hệ thống.',
+        'expected_context': '- **SV sẽ có thời gian tối đa 2 tuần đề làm 1 bài đánh giá liên tục kể từ****khi bài kiểm tra được mở trên hệ thống**. Ví dụ bài kiểm tra cho tuần 2 sẽ đóng khi hết tuần 4.',
+        'source_file': 'article_5.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Hồ sơ xin xét Học bổng sau đại học đối với nghiên cứu sinh bao gồm những gì?',
+        'expected_answer': 'Đơn đăng ký xét học bổng (theo mẫu, Phụ lục II) kèm theo các minh chứng đủ điều kiện nhận học bổng theo quy định.',
+        'expected_context': '- Đối với nghiên cứu sinh: Đơn đăng ký xét học bổng (theo mẫu, Phụ lục II) kèm theo các minh chứng đủ điều kiện nhận học bổng theo quy định.',
+        'source_file': 'article_1.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Điểm quá trình (ĐQT) của học phần Toán cao cấp được tính dựa trên những điểm thành phần nào?',
+        'expected_answer': 'ĐQT được đánh giá dựa trên Điểm chuyên cần học tập (ĐCCHT) (trọng số 0.4) và Điểm kiểm tra định kỳ (ĐKTĐK) (trọng số 0.6).',
+        'expected_context': 'ĐQT được đánh giá dựa trên **Điểm chuyên cần học tập** (ĐCCHT) và **Điểm kiểm tra định kỳ** (ĐKTĐK).\n\n**ĐQT = 0.4×ĐCCHT + 0.6×ĐKTĐK**',
+        'source_file': 'article_2.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Theo thông báo, từ ngày 07/07/2025, văn phòng Khoa Toán - Tin sẽ chuyển về địa điểm nào?',
+        'expected_answer': 'Văn phòng Khoa Toán - Tin sẽ làm việc tại Phòng 119, toà nhà C1, Đại học Bách khoa Hà Nội.',
+        'expected_context': 'Kể từ ngày 07/07/2025, văn phòng Khoa Toán - Tin làm việc tại: Phòng 119, toà nhà C1, Đại học Bách khoa Hà Nội.',
+        'source_file': 'article_4.md',
+        'category': 'news'
+    },
+    {
+        'question': 'Bài đánh giá liên tục môn Toán cao cấp được mở theo lịch như thế nào?',
+        'expected_answer': 'Bài đánh giá liên tục sẽ được mở theo tuần học thực tế của lớp (không tính tuần học quân sự).',
+        'expected_context': '- Bài đánh giá liên tục sẽ được mở **theo tuần học thực tế của lớp** (không tính tuần học quân sự).',
+        'source_file': 'article_5.md',
+        'category': 'news'
+    }
+]
+
+import re
+import os
+errors = 0
+with open('errors.txt', 'w', encoding='utf-8') as err_file:
+    for i, d in enumerate(data):
+        src = os.path.join('data/standardized', d['category'], d['source_file'])
+        content = open(src, 'r', encoding='utf-8').read()
+        def normalize(s): return "".join(re.split(r'\s+', s))
+        if normalize(d['expected_context']) not in normalize(content):
+            err_file.write(f"Error in context for Q{i+1}: {d['question']}\n")
+            errors += 1
+
+    if errors == 0:
+        err_file.write('All contexts verified!\n')
+        with open('group_project/evaluation/golden_dataset.json', 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        err_file.write(f'Wrote {len(data)} items to golden_dataset.json\n')
