@@ -83,7 +83,7 @@ def convert_legal_docs():
 
 
 def convert_news_articles():
-    """Convert JSON crawled articles trong data/landing/news/ sang markdown."""
+    """Convert JSON/HTML crawled articles trong data/landing/news/ sang markdown."""
     news_dir = LANDING_DIR / "news"
     output_dir = OUTPUT_DIR / "news"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,26 +92,82 @@ def convert_news_articles():
         print("  (chưa có data/landing/news/ — chạy Task 2 trước)")
         return 0
 
+    md = MarkItDown()
     count = 0
 
     for filepath in sorted(news_dir.iterdir()):
-        if filepath.suffix.lower() != ".json":
+        suffix = filepath.suffix.lower()
+        if suffix not in (".json", ".html", ".htm"):
             continue
 
         print(f"Converting: {filepath.name}")
-        try:
-            data = json.loads(filepath.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as e:
-            print(f"  ✗ File JSON hỏng: {e}")
-            continue
+        content = ""
+        header = ""
 
-        # File crawl4ai đã là markdown sẵn -> chỉ cần gắn metadata header
-        header = f"# {data.get('title', 'Unknown')}\n\n"
-        header += f"**Source:** {data.get('url', 'N/A')}\n"
-        header += f"**Crawled:** {data.get('date_crawled', 'N/A')}\n"
-        header += "**Type:** news\n\n---\n\n"
+        if suffix == ".json":
+            try:
+                data = json.loads(filepath.read_text(encoding="utf-8"))
+                header = f"# {data.get('title', 'Unknown')}\n\n"
+                header += f"**Source:** {data.get('url', 'N/A')}\n"
+                header += f"**Crawled:** {data.get('date_crawled', 'N/A')}\n"
+                header += "**Type:** news\n\n---\n\n"
+                content = data.get("content_markdown", "")
+            except json.JSONDecodeError as e:
+                print(f"  ✗ File JSON hỏng: {e}")
+                continue
+        else:
+            try:
+                result = md.convert(str(filepath))
+            except Exception as e:
+                print(f"  ✗ Lỗi convert HTML: {type(e).__name__}: {e}")
+                continue
 
-        content = clean_markdown(data.get("content_markdown", ""))
+            # --- Title ---
+            title = (getattr(result, "title", None) or "").strip()
+            if not title:
+                title = filepath.stem.replace("_", " ").replace("-", " ").title()
+
+            # --- URL: tìm thẻ canonical hoặc og:url trong HTML thô (regex, không BeautifulSoup) ---
+            url = "N/A"
+            try:
+                raw_text = filepath.read_bytes().decode("utf-8", errors="replace")
+                # canonical: <link rel="canonical" href="..."> hoặc href trước rel
+                m = re.search(
+                    r'<link[^>]+rel=["\']canonical["\'][^>]+href=["\']([^"\']+)["\']',
+                    raw_text, re.IGNORECASE
+                ) or re.search(
+                    r'<link[^>]+href=["\']([^"\']+)["\'][^>]+rel=["\']canonical["\']',
+                    raw_text, re.IGNORECASE
+                )
+                if m:
+                    url = m.group(1).strip()
+                else:
+                    # og:url: <meta property="og:url" content="...">
+                    m2 = re.search(
+                        r'<meta[^>]+property=["\']og:url["\'][^>]+content=["\']([^"\']+)["\']',
+                        raw_text, re.IGNORECASE
+                    ) or re.search(
+                        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:url["\']',
+                        raw_text, re.IGNORECASE
+                    )
+                    if m2:
+                        url = m2.group(1).strip()
+            except Exception:
+                pass  # giữ url = "N/A" nếu đọc file lỗi
+
+            # --- Date: lấy mtime của file (xấp xỉ thời điểm crawl) ---
+            from datetime import datetime as _dt
+            date_crawled = _dt.fromtimestamp(filepath.stat().st_mtime).strftime(
+                "%Y-%m-%dT%H:%M:%S"
+            )
+
+            header = f"# {title}\n\n"
+            header += f"**Source:** {url}\n"
+            header += f"**Crawled:** {date_crawled}\n"
+            header += "**Type:** news\n\n---\n\n"
+            content = result.text_content or ""
+
+        content = clean_markdown(content)
         if len(content) < 200:
             print(f"  ✗ Nội dung quá ngắn ({len(content)} ký tự) — bỏ qua")
             continue
